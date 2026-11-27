@@ -78,3 +78,4 @@ CREATE INDEX IF NOT EXISTS idx_ingredients_package ON package_ingredients(packag
 CREATE INDEX IF NOT EXISTS idx_orders_delivery_status ON catering_orders(delivery_date, status);
 CREATE INDEX IF NOT EXISTS idx_items_order ON order_items(order_id);
 CREATE INDEX IF NOT EXISTS idx_payments_order ON order_payments(order_id, paid_at);
+CREATE SEQUENCE IF NOT EXISTS order_code_seq START 1;

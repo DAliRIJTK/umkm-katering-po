@@ -1,18 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { UnauthorizedError, ValidationError } from "@/lib/domain/errors";
+import { ALL_ORDER_STATUSES } from "@/lib/domain/state-machine";
 import type { CreateOrderInput, OrderStatus } from "@/lib/domain/types";
-import { handleRouteError, isAdminAuthenticated, parseJsonBody } from "@/lib/http";
+import {
+  handleRouteError,
+  isAdminAuthenticated,
+  maskPhoneForOps,
+  parseJsonBody,
+} from "@/lib/http";
 import { createOrder, ensureInitialized, listOrders } from "@/lib/repo/catering-repo";
-
-const VALID_STATUSES: OrderStatus[] = [
-  "MENUNGGU_DP",
-  "TERJADWAL",
-  "DIPRODUKSI",
-  "SIAP_KIRIM",
-  "SELESAI_DIKIRIM",
-  "DIBATALKAN",
-];
 
 export async function GET(req: NextRequest) {
   try {
@@ -24,7 +21,7 @@ export async function GET(req: NextRequest) {
 
     let status: OrderStatus | undefined;
     if (statusParam) {
-      if (!VALID_STATUSES.includes(statusParam as OrderStatus)) {
+      if (!ALL_ORDER_STATUSES.includes(statusParam as OrderStatus)) {
         throw new ValidationError("Filter status PO tidak valid.");
       }
       status = statusParam as OrderStatus;
@@ -35,7 +32,11 @@ export async function GET(req: NextRequest) {
       date: dateParam || undefined,
       query: qParam || undefined,
     });
-    return NextResponse.json({ orders });
+    const isAdmin = isAdminAuthenticated(req);
+    const safeOrders = isAdmin
+      ? orders
+      : orders.map((o) => ({ ...o, customerPhone: maskPhoneForOps(o.customerPhone) }));
+    return NextResponse.json({ orders: safeOrders });
   } catch (err) {
     return handleRouteError(err);
   }
@@ -45,7 +46,7 @@ export async function POST(req: NextRequest) {
   try {
     const db = await getDb();
     await ensureInitialized(db);
-    const body = await parseJsonBody<CreateOrderInput>(req);
+    const body = await parseJsonBody<CreateOrderInput & Record<string, unknown>>(req);
     if (body.initialPayment !== undefined && !isAdminAuthenticated(req)) {
       throw new UnauthorizedError("Pembayaran awal saat membuat PO hanya dapat dicatat oleh Admin.");
     }

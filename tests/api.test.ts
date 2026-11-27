@@ -13,6 +13,7 @@ import { PATCH as statusPatch } from "../src/app/api/orders/[id]/status/route";
 import { GET as bomGet } from "../src/app/api/shopping-list/route";
 import { POST as adminLoginPost } from "../src/app/api/admin/login/route";
 import { GET as adminOverviewGet } from "../src/app/api/admin/overview/route";
+import { PATCH as adminPackagePatch } from "../src/app/api/admin/packages/[id]/route";
 import { PATCH as adminSettingsPatch } from "../src/app/api/admin/settings/route";
 import { ADMIN_COOKIE_NAME } from "../src/lib/http";
 
@@ -112,10 +113,24 @@ describe("Next.js API Route Handlers end-to-end (PGlite memory://)", () => {
     const bomJson = await bomRes.json();
     expect(bomJson.items.some((i: { ingredientName: string }) => i.ingredientName === "Beras Pulen")).toBe(true);
 
-    // Check orders listing
+    // Check orders listing masks phone when unauthenticated
     const listRes = await ordersGet(new NextRequest("http://localhost/api/orders?date=2026-11-30"));
     const listJson = await listRes.json();
     expect(listJson.orders).toHaveLength(1);
+    expect(listJson.orders[0].customerPhone).toContain("****");
+
+    // Reject non-object JSON payload cleanly with 400 (never 500)
+    const badJsonRes = await adminLoginPost(
+      jsonReq("http://localhost/api/admin/login", "POST", ["not-an-object"])
+    );
+    expect(badJsonRes.status).toBe(400);
+
+    // Reject excessive capacity dates query (> 14)
+    const tooManyDates = Array.from({ length: 15 }, (_, idx) => `2026-12-${String(idx + 1).padStart(2, "0")}`).join(",");
+    const capLimitRes = await packagesGet(
+      new NextRequest(`http://localhost/api/packages?dates=${tooManyDates}`)
+    );
+    expect(capLimitRes.status).toBe(400);
   });
 
   it("protects admin endpoints with scrypt PIN cookie and rate-limits brute force", async () => {
@@ -160,5 +175,15 @@ describe("Next.js API Route Handlers end-to-end (PGlite memory://)", () => {
     expect(patchRes.status).toBe(200);
     const patchJson = await patchRes.json();
     expect(patchJson.settings.dailyCapacityBoxes).toBe(220);
+
+    // Update menu package price & minOrderQty via PATCH /api/admin/packages/[id]
+    const pkgPatchRes = await adminPackagePatch(
+      jsonReq("http://localhost/api/admin/packages/1", "PATCH", { priceIdr: 34_000, minOrderQty: 12 }, sessionCookie),
+      { params: Promise.resolve({ id: "1" }) }
+    );
+    expect(pkgPatchRes.status).toBe(200);
+    const pkgPatchJson = await pkgPatchRes.json();
+    expect(pkgPatchJson.package.priceIdr).toBe(34_000);
+    expect(pkgPatchJson.package.minOrderQty).toBe(12);
   });
 });

@@ -17,11 +17,19 @@ export function getPinRateLimiter(): PinRateLimiter {
 }
 
 export function getClientKey(req: NextRequest): string {
-  const forwarded = req.headers.get("x-forwarded-for");
-  if (forwarded) {
-    return forwarded.split(",")[0].trim() || "local";
+  // Hanya percaya header proxy bila secara eksplisit diaktifkan atau saat mode test.
+  if (process.env.TRUST_PROXY === "1" || process.env.NODE_ENV === "test") {
+    const forwarded = req.headers.get("x-forwarded-for");
+    if (forwarded) {
+      return forwarded.split(",")[0].trim() || "local";
+    }
   }
-  return req.headers.get("x-real-ip") || "local";
+  return req.headers.get("x-real-ip")?.trim() || "local-client";
+}
+
+export function maskPhoneForOps(phone: string): string {
+  if (!phone || phone.length < 8) return phone;
+  return `${phone.slice(0, 4)}****${phone.slice(-4)}`;
 }
 
 export function isAdminAuthenticated(req: NextRequest): boolean {
@@ -43,12 +51,17 @@ export function parsePositiveIntId(raw: string): number {
   return num;
 }
 
-export async function parseJsonBody<T>(req: NextRequest): Promise<T> {
+export async function parseJsonBody<T extends object>(req: NextRequest): Promise<T> {
+  let parsed: unknown;
   try {
-    return (await req.json()) as T;
+    parsed = await req.json();
   } catch {
     throw new ValidationError("Format body JSON tidak valid.");
   }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new ValidationError("Payload JSON harus berupa objek.");
+  }
+  return parsed as T;
 }
 
 export function handleRouteError(err: unknown): NextResponse {

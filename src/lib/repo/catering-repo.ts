@@ -34,6 +34,7 @@ import {
   validatePositiveInt,
 } from "../domain/validators";
 import { SCHEMA_SQL } from "../schema";
+import { seedDatabaseIfEmpty } from "./seed";
 
 const initLocks = new WeakMap<PGlite, Promise<void>>();
 
@@ -52,270 +53,6 @@ export async function ensureInitialized(db: PGlite): Promise<void> {
   } catch (err) {
     initLocks.delete(db);
     throw err;
-  }
-}
-
-async function seedDatabaseIfEmpty(db: PGlite): Promise<void> {
-  const countRes = await db.query<{ cnt: string }>("SELECT COUNT(*)::text AS cnt FROM kitchen_settings");
-  if (Number(countRes.rows[0]?.cnt ?? 0) > 0) {
-    return;
-  }
-
-  const defaultPin = process.env.DAPUR_ADMIN_PIN || "271127";
-  const { salt, hash } = hashPin(defaultPin);
-
-  await db.query(
-    `INSERT INTO kitchen_settings
-      (id, business_name, whatsapp_number, address_area, daily_capacity_boxes, min_dp_percent, admin_pin_salt, admin_pin_hash)
-     VALUES (1, $1, $2, $3, $4, $5, $6, $7)
-     ON CONFLICT (id) DO NOTHING`,
-    ["DapurRantang", "081200002711", "Coblong, Bandung", 200, 30, salt, hash]
-  );
-
-  const seedPackages: Array<{
-    code: string;
-    name: string;
-    category: PackageCategory;
-    description: string;
-    unitLabel: string;
-    priceIdr: number;
-    minOrderQty: number;
-    ingredients: Array<[string, IngredientCategory, number, string, number]>;
-  }> = [
-    {
-      code: "PKT-AYB",
-      name: "Nasi Kotak Ayam Bakar Madu",
-      category: "NASI_KOTAK",
-      description: "Nasi pulen hangat, ayam bakar bumbu madu, lalapan segar, sambal terasi, dan air mineral 330ml.",
-      unitLabel: "box",
-      priceIdr: 32_000,
-      minOrderQty: 15,
-      ingredients: [
-        ["Beras Pulen", "BAHAN_BAKU", 150, "gram", 16],
-        ["Ayam Potong Bakar", "BAHAN_BAKU", 1, "potong", 12000],
-        ["Lalapan & Sambal Terasi", "BAHAN_BAKU", 1, "porsi", 2500],
-        ["Dus Kraft 20x20", "KEMASAN", 1, "pcs", 1500],
-        ["Air Mineral 330ml", "KEMASAN", 1, "pcs", 1200],
-        ["Sendok & Tisu", "KEMASAN", 1, "set", 400],
-      ],
-    },
-    {
-      code: "PKT-RND",
-      name: "Nasi Kotak Rendang Padang Komplit",
-      category: "NASI_KOTAK",
-      description: "Rendang daging sapi empuk, sayur nangka kapau, sambal hijau, nasi pulen, dan air mineral.",
-      unitLabel: "box",
-      priceIdr: 42_000,
-      minOrderQty: 15,
-      ingredients: [
-        ["Beras Pulen", "BAHAN_BAKU", 150, "gram", 16],
-        ["Daging Sapi Rendang", "BAHAN_BAKU", 120, "gram", 140],
-        ["Sayur Nangka & Sambal Ijo", "BAHAN_BAKU", 1, "porsi", 3500],
-        ["Dus Kraft 20x20", "KEMASAN", 1, "pcs", 1500],
-        ["Air Mineral 330ml", "KEMASAN", 1, "pcs", 1200],
-        ["Sendok & Tisu", "KEMASAN", 1, "set", 400],
-      ],
-    },
-    {
-      code: "PKT-EMP",
-      name: "Nasi Kotak Empal Gentong & Telur Balado",
-      category: "NASI_KOTAK",
-      description: "Empal daging bumbu kuning gurih, telur balado, tumis buncis, dan kerupuk udang.",
-      unitLabel: "box",
-      priceIdr: 38_000,
-      minOrderQty: 15,
-      ingredients: [
-        ["Beras Pulen", "BAHAN_BAKU", 150, "gram", 16],
-        ["Daging Empal", "BAHAN_BAKU", 100, "gram", 145],
-        ["Telur Balado", "BAHAN_BAKU", 1, "butir", 2500],
-        ["Dus Kraft 20x20", "KEMASAN", 1, "pcs", 1500],
-        ["Air Mineral 330ml", "KEMASAN", 1, "pcs", 1200],
-      ],
-    },
-    {
-      code: "PKT-SNK",
-      name: "Snack Box Pengajian & Rapat (3 Kue)",
-      category: "SNACK_BOX",
-      description: "Kombinasi risoles mayo, lemper ayam bakar, kue lumpur kentang, dan air mineral gelas 220ml.",
-      unitLabel: "box",
-      priceIdr: 16_000,
-      minOrderQty: 20,
-      ingredients: [
-        ["Risoles Mayo", "BAHAN_BAKU", 1, "pcs", 3000],
-        ["Lemper Ayam", "BAHAN_BAKU", 1, "pcs", 3000],
-        ["Kue Lumpur Kentang", "BAHAN_BAKU", 1, "pcs", 2500],
-        ["Dus Snack 16x12", "KEMASAN", 1, "pcs", 900],
-        ["Air Mineral 220ml", "KEMASAN", 1, "pcs", 600],
-      ],
-    },
-    {
-      code: "PKT-KNG",
-      name: "Nasi Kuning Syukuran Komplit",
-      category: "TUMPENG_PRASMANAN",
-      description: "Nasi kuning harum sereh, ayam goreng lengkuas, perkedel kentang, dan orek tempe kering.",
-      unitLabel: "box",
-      priceIdr: 35_000,
-      minOrderQty: 20,
-      ingredients: [
-        ["Beras Kuning", "BAHAN_BAKU", 160, "gram", 18],
-        ["Ayam Goreng Lengkuas", "BAHAN_BAKU", 1, "potong", 12000],
-        ["Perkedel & Orek Tempe", "BAHAN_BAKU", 1, "porsi", 3500],
-        ["Dus Mika Bento", "KEMASAN", 1, "pcs", 2200],
-        ["Sendok & Tisu", "KEMASAN", 1, "set", 400],
-      ],
-    },
-  ];
-
-  const pkgIds = new Map<string, { id: number; name: string; priceIdr: number }>();
-  for (const pkg of seedPackages) {
-    const pkgRes = await db.query<{ id: number }>(
-      `INSERT INTO menu_packages (code, name, category, description, unit_label, price_idr, min_order_qty, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE)
-       RETURNING id`,
-      [pkg.code, pkg.name, pkg.category, pkg.description, pkg.unitLabel, pkg.priceIdr, pkg.minOrderQty]
-    );
-    const pkgId = pkgRes.rows[0].id;
-    pkgIds.set(pkg.code, { id: pkgId, name: pkg.name, priceIdr: pkg.priceIdr });
-
-    for (const [ingName, cat, qtyPerBox, unit, cost] of pkg.ingredients) {
-      await db.query(
-        `INSERT INTO package_ingredients (package_id, ingredient_name, category, qty_per_box, unit, estimated_unit_cost_idr)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [pkgId, ingName, cat, qtyPerBox, unit, cost]
-      );
-    }
-  }
-
-  const seedOrders: Array<{
-    orderCode: string;
-    customerName: string;
-    institutionName: string;
-    customerPhone: string;
-    deliveryAddress: string;
-    deliveryDate: string;
-    deliveryTime: string;
-    notes: string;
-    status: OrderStatus;
-    items: Array<{ code: string; qty: number }>;
-    payments: Array<{ amountIdr: number; method: PaymentMethod; kind: PaymentKind; note: string }>;
-  }> = [
-    {
-      orderCode: "PO-261127-01",
-      customerName: "Bu Aminah",
-      institutionName: "Pengajian Al-Falah",
-      customerPhone: "081234567801",
-      deliveryAddress: "Jl. Tubagus Ismail, Coblong, Bandung",
-      deliveryDate: "2026-11-28",
-      deliveryTime: "08:00",
-      notes: "Antar ke aula masjid lantai 1",
-      status: "DIPRODUKSI",
-      items: [
-        { code: "PKT-SNK", qty: 60 },
-        { code: "PKT-AYB", qty: 40 },
-      ],
-      payments: [{ amountIdr: 1_000_000, method: "TRANSFER", kind: "DP", note: "DP awal pengajian" }],
-    },
-    {
-      orderCode: "PO-261127-02",
-      customerName: "Pak Wahyu",
-      institutionName: "Dinas Koperasi Kota",
-      customerPhone: "081398765432",
-      deliveryAddress: "Jl. Wastukencana, Bandung Wetan",
-      deliveryDate: "2026-11-28",
-      deliveryTime: "11:30",
-      notes: "Minta nota berstempel",
-      status: "TERJADWAL",
-      items: [{ code: "PKT-RND", qty: 50 }],
-      payments: [{ amountIdr: 700_000, method: "QRIS", kind: "DP", note: "DP 33% rapat dinas" }],
-    },
-    {
-      orderCode: "PO-261127-03",
-      customerName: "Mbak Nita",
-      institutionName: "Klinik Sehat Pratama",
-      customerPhone: "085611223344",
-      deliveryAddress: "Jl. Buah Batu, Lengkong, Bandung",
-      deliveryDate: "2026-11-27",
-      deliveryTime: "17:00",
-      notes: "Sambal dipisah untuk 10 box",
-      status: "SIAP_KIRIM",
-      items: [{ code: "PKT-AYB", qty: 30 }],
-      payments: [{ amountIdr: 400_000, method: "TUNAI", kind: "DP", note: "Titip DP di kasir" }],
-    },
-    {
-      orderCode: "PO-261127-04",
-      customerName: "Mas Riko",
-      institutionName: "Karang Taruna RW 05",
-      customerPhone: "082144556677",
-      deliveryAddress: "Jl. Antapani Lama, Antapani, Bandung",
-      deliveryDate: "2026-11-29",
-      deliveryTime: "09:30",
-      notes: "Menunggu konfirmasi bendahara",
-      status: "MENUNGGU_DP",
-      items: [{ code: "PKT-KNG", qty: 40 }],
-      payments: [],
-    },
-    {
-      orderCode: "PO-261127-05",
-      customerName: "Ibu Ratna",
-      institutionName: "PT Karya Mandiri",
-      customerPhone: "081788990011",
-      deliveryAddress: "Jl. Asia Afrika, Sumur Bandung",
-      deliveryDate: "2026-11-27",
-      deliveryTime: "11:00",
-      notes: "Sudah diterima resepsionis",
-      status: "SELESAI_DIKIRIM",
-      items: [{ code: "PKT-EMP", qty: 25 }],
-      payments: [{ amountIdr: 950_000, method: "TRANSFER", kind: "PELUNASAN", note: "Lunas di muka" }],
-    },
-  ];
-
-  for (const ord of seedOrders) {
-    let totalBoxes = 0;
-    let totalIdr = 0;
-    const resolved = ord.items.map((item) => {
-      const pkg = pkgIds.get(item.code)!;
-      const subtotalIdr = item.qty * pkg.priceIdr;
-      totalBoxes += item.qty;
-      totalIdr += subtotalIdr;
-      return { ...pkg, qty: item.qty, subtotalIdr };
-    });
-
-    const ordRes = await db.query<{ id: number }>(
-      `INSERT INTO catering_orders
-        (order_code, customer_name, institution_name, customer_phone, delivery_address, delivery_date, delivery_time, notes, status, total_boxes, total_idr)
-       VALUES ($1, $2, $3, $4, $5, $6::date, $7, $8, $9, $10, $11)
-       RETURNING id`,
-      [
-        ord.orderCode,
-        ord.customerName,
-        ord.institutionName,
-        ord.customerPhone,
-        ord.deliveryAddress,
-        ord.deliveryDate,
-        ord.deliveryTime,
-        ord.notes,
-        ord.status,
-        totalBoxes,
-        totalIdr,
-      ]
-    );
-    const orderId = ordRes.rows[0].id;
-
-    for (const item of resolved) {
-      await db.query(
-        `INSERT INTO order_items (order_id, package_id, package_name_snapshot, qty, unit_price_idr, subtotal_idr)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [orderId, item.id, item.name, item.qty, item.priceIdr, item.subtotalIdr]
-      );
-    }
-
-    for (const pay of ord.payments) {
-      await db.query(
-        `INSERT INTO order_payments (order_id, amount_idr, method, kind, note)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [orderId, pay.amountIdr, pay.method, pay.kind, pay.note]
-      );
-    }
   }
 }
 
@@ -427,25 +164,45 @@ export async function getDailyCapacity(db: PGlite, dateStr: string): Promise<Dai
   );
   const usedBoxes = Number(res.rows[0]?.used ?? 0);
   const capacityBoxes = settings.daily_capacity_boxes;
-  const remainingBoxes = Math.max(0, capacityBoxes - usedBoxes);
-  const utilizationPct = Math.min(100, Math.round((usedBoxes / capacityBoxes) * 100));
   return {
     date: validDate,
     usedBoxes,
     capacityBoxes,
-    remainingBoxes,
-    utilizationPct,
+    remainingBoxes: Math.max(0, capacityBoxes - usedBoxes),
+    utilizationPct: Math.min(100, Math.round((usedBoxes / capacityBoxes) * 100)),
   };
 }
 
 export async function getPublicSnapshot(db: PGlite, dates?: string[]) {
   const settings = await getPublicSettings(db);
   const packages = await listMenuPackages(db, { includeInactive: false });
-  const targetDates = dates && dates.length > 0 ? dates : ["2026-11-27", "2026-11-28", "2026-11-29"];
-  const capacities: DailyCapacityInfo[] = [];
-  for (const d of targetDates) {
-    capacities.push(await getDailyCapacity(db, d));
+  const rawDates =
+    dates && dates.length > 0 ? dates : ["2026-11-27", "2026-11-28", "2026-11-29"];
+  const targetDates = Array.from(new Set(rawDates.map(validateDeliveryDate)));
+  if (targetDates.length > 14) {
+    throw new ValidationError("Maksimal 14 tanggal kapasitas per permintaan.");
   }
+
+  const capRes = await db.query<{ d: string; used: string }>(
+    `SELECT TO_CHAR(delivery_date, 'YYYY-MM-DD') AS d, COALESCE(SUM(total_boxes), 0)::text AS used
+     FROM catering_orders
+     WHERE delivery_date = ANY($1::date[]) AND status <> 'DIBATALKAN'
+     GROUP BY delivery_date`,
+    [targetDates]
+  );
+  const usedMap = new Map(capRes.rows.map((r) => [r.d, Number(r.used)]));
+  const capacities: DailyCapacityInfo[] = targetDates.map((d) => {
+    const usedBoxes = usedMap.get(d) ?? 0;
+    const cap = settings.dailyCapacityBoxes;
+    return {
+      date: d,
+      usedBoxes,
+      capacityBoxes: cap,
+      remainingBoxes: Math.max(0, cap - usedBoxes),
+      utilizationPct: Math.min(100, Math.round((usedBoxes / cap) * 100)),
+    };
+  });
+
   return { settings, packages, capacities };
 }
 
@@ -472,33 +229,34 @@ async function hydrateOrders(
   if (orderRows.length === 0) return [];
   const ids = orderRows.map((o) => o.id);
 
-  const itemsRes = await db.query<{
-    id: number;
-    order_id: number;
-    package_id: number;
-    package_name_snapshot: string;
-    qty: number;
-    unit_price_idr: number;
-    subtotal_idr: number;
-  }>(
-    `SELECT id, order_id, package_id, package_name_snapshot, qty, unit_price_idr, subtotal_idr
-     FROM order_items WHERE order_id = ANY($1::int[]) ORDER BY id ASC`,
-    [ids]
-  );
-
-  const paysRes = await db.query<{
-    id: number;
-    order_id: number;
-    amount_idr: number;
-    method: PaymentMethod;
-    kind: PaymentKind;
-    paid_at: string;
-    note: string;
-  }>(
-    `SELECT id, order_id, amount_idr, method, kind, paid_at::text AS paid_at, note
-     FROM order_payments WHERE order_id = ANY($1::int[]) ORDER BY paid_at ASC, id ASC`,
-    [ids]
-  );
+  const [itemsRes, paysRes] = await Promise.all([
+    db.query<{
+      id: number;
+      order_id: number;
+      package_id: number;
+      package_name_snapshot: string;
+      qty: number;
+      unit_price_idr: number;
+      subtotal_idr: number;
+    }>(
+      `SELECT id, order_id, package_id, package_name_snapshot, qty, unit_price_idr, subtotal_idr
+       FROM order_items WHERE order_id = ANY($1::int[]) ORDER BY id ASC`,
+      [ids]
+    ),
+    db.query<{
+      id: number;
+      order_id: number;
+      amount_idr: number;
+      method: PaymentMethod;
+      kind: PaymentKind;
+      paid_at: string;
+      note: string;
+    }>(
+      `SELECT id, order_id, amount_idr, method, kind, paid_at::text AS paid_at, note
+       FROM order_payments WHERE order_id = ANY($1::int[]) ORDER BY paid_at ASC, id ASC`,
+      [ids]
+    ),
+  ]);
 
   const itemsByOrder = new Map<number, OrderItem[]>();
   for (const r of itemsRes.rows) {
@@ -687,6 +445,7 @@ export async function trackOrderPublic(
     institutionName: order.institutionName,
     deliveryDate: order.deliveryDate,
     deliveryTime: order.deliveryTime,
+    notes: order.notes,
     status: order.status,
     totalBoxes: order.totalBoxes,
     totalIdr: order.totalIdr,
@@ -729,6 +488,9 @@ export async function createOrder(db: PGlite, input: CreateOrderInput): Promise<
   }
 
   const createdId = await db.transaction(async (tx) => {
+    // Advisory lock per tanggal kirim mencegah race condition oversell kapasitas pada transaksi paralel
+    await tx.query("SELECT pg_advisory_xact_lock(hashtext($1))", [deliveryDate]);
+
     const settingsRes = await tx.query<{ daily_capacity_boxes: number; min_dp_percent: number }>(
       "SELECT daily_capacity_boxes, min_dp_percent FROM kitchen_settings WHERE id = 1"
     );
@@ -814,7 +576,7 @@ export async function createOrder(db: PGlite, input: CreateOrderInput): Promise<
       initialPaymentAmount >= minDpIdr ? "TERJADWAL" : "MENUNGGU_DP";
 
     const seqRes = await tx.query<{ next_id: string }>(
-      "SELECT (COALESCE(MAX(id), 0) + 1)::text AS next_id FROM catering_orders"
+      "SELECT nextval('order_code_seq')::text AS next_id"
     );
     const seqNum = Number(seqRes.rows[0].next_id);
     const yyMmDd = deliveryDate.slice(2).replace(/-/g, "");
@@ -891,7 +653,7 @@ export async function recordPayment(
     const minDpPercent = settingsRes.rows[0].min_dp_percent;
 
     const ordRes = await tx.query<{ id: number; status: OrderStatus; total_idr: number }>(
-      "SELECT id, status, total_idr FROM catering_orders WHERE id = $1",
+      "SELECT id, status, total_idr FROM catering_orders WHERE id = $1 FOR UPDATE",
       [orderId]
     );
     if (ordRes.rows.length === 0) {
@@ -909,9 +671,7 @@ export async function recordPayment(
     const currentPaid = Number(paidRes.rows[0]?.paid ?? 0);
     const remaining = order.total_idr - currentPaid;
     if (amountIdr > remaining) {
-      throw new ConflictError(
-        `Nominal pembayaran melebihi sisa tagihan (${remaining}).`
-      );
+      throw new ConflictError(`Nominal pembayaran melebihi sisa tagihan (${remaining}).`);
     }
 
     await tx.query(
@@ -947,7 +707,7 @@ export async function transitionOrderStatus(
     const minDpPercent = settingsRes.rows[0].min_dp_percent;
 
     const ordRes = await tx.query<{ id: number; status: OrderStatus; total_idr: number }>(
-      "SELECT id, status, total_idr FROM catering_orders WHERE id = $1",
+      "SELECT id, status, total_idr FROM catering_orders WHERE id = $1 FOR UPDATE",
       [orderId]
     );
     if (ordRes.rows.length === 0) {
@@ -1177,18 +937,54 @@ export async function createMenuPackage(
   return all.find((p) => p.id === pkgId)!;
 }
 
+export async function updateMenuPackage(
+  db: PGlite,
+  packageId: number,
+  patch: { isActive?: boolean; priceIdr?: number; minOrderQty?: number }
+): Promise<MenuPackage> {
+  const curRes = await db.query<{
+    id: number;
+    is_active: boolean;
+    price_idr: number;
+    min_order_qty: number;
+  }>("SELECT id, is_active, price_idr, min_order_qty FROM menu_packages WHERE id = $1", [
+    packageId,
+  ]);
+  if (curRes.rows.length === 0) {
+    throw new NotFoundError("Paket menu tidak ditemukan.");
+  }
+  const cur = curRes.rows[0];
+  const nextActive =
+    patch.isActive !== undefined
+      ? (() => {
+          if (typeof patch.isActive !== "boolean") {
+            throw new ValidationError("Field isActive wajib bertipe boolean.");
+          }
+          return patch.isActive;
+        })()
+      : cur.is_active;
+  const nextPrice =
+    patch.priceIdr !== undefined
+      ? validatePositiveInt(patch.priceIdr, "Harga paket", 1000)
+      : cur.price_idr;
+  const nextMinQty =
+    patch.minOrderQty !== undefined
+      ? validatePositiveInt(patch.minOrderQty, "Minimal order", 1, 1000)
+      : cur.min_order_qty;
+
+  await db.query(
+    "UPDATE menu_packages SET is_active = $1, price_idr = $2, min_order_qty = $3 WHERE id = $4",
+    [nextActive, nextPrice, nextMinQty, packageId]
+  );
+
+  const all = await listMenuPackages(db, { includeInactive: true });
+  return all.find((p) => p.id === packageId)!;
+}
+
 export async function toggleMenuPackage(
   db: PGlite,
   packageId: number,
   isActive: boolean
 ): Promise<MenuPackage> {
-  const res = await db.query<{ id: number }>(
-    "UPDATE menu_packages SET is_active = $1 WHERE id = $2 RETURNING id",
-    [isActive, packageId]
-  );
-  if (res.rows.length === 0) {
-    throw new NotFoundError("Paket menu tidak ditemukan.");
-  }
-  const all = await listMenuPackages(db, { includeInactive: true });
-  return all.find((p) => p.id === packageId)!;
+  return updateMenuPackage(db, packageId, { isActive });
 }

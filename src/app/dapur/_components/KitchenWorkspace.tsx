@@ -102,16 +102,29 @@ export function KitchenWorkspace() {
   const [draftItems, setDraftItems] = useState<DraftOrderItem[]>([]);
 
   const loadSnapshotAndOrders = useCallback(async () => {
-    const [pkgRes, ordRes] = await Promise.all([
-      fetch(`/api/packages?dates=${encodeURIComponent(CAPACITY_DATES)}`, { cache: "no-store" }),
-      fetch("/api/orders", { cache: "no-store" }),
-    ]);
-
-    if (!pkgRes.ok) {
-      throw new Error(await readErrorMessage(pkgRes, "Gagal memuat data paket dan kuota dapur."));
-    }
+    const ordRes = await fetch("/api/orders", { cache: "no-store" });
     if (!ordRes.ok) {
       throw new Error(await readErrorMessage(ordRes, "Gagal memuat daftar pre-order."));
+    }
+    const ordData = (await ordRes.json()) as { orders: CateringOrder[] };
+
+    const activeDates = Array.from(
+      new Set([
+        ...CAPACITY_DATES.split(","),
+        ...ordData.orders
+          .filter((o) => o.status !== "DIBATALKAN")
+          .map((o) => o.deliveryDate),
+      ])
+    )
+      .sort()
+      .slice(0, 6);
+
+    const pkgRes = await fetch(
+      `/api/packages?dates=${encodeURIComponent(activeDates.join(","))}`,
+      { cache: "no-store" }
+    );
+    if (!pkgRes.ok) {
+      throw new Error(await readErrorMessage(pkgRes, "Gagal memuat data paket dan kuota dapur."));
     }
 
     const pkgData = (await pkgRes.json()) as {
@@ -119,7 +132,6 @@ export function KitchenWorkspace() {
       packages: MenuPackage[];
       capacities: DailyCapacityInfo[];
     };
-    const ordData = (await ordRes.json()) as { orders: CateringOrder[] };
 
     setSettings(pkgData.settings);
     setPackages(pkgData.packages);
@@ -418,14 +430,18 @@ export function KitchenWorkspace() {
   }
 
   async function handleBomRangeChange(nextFrom: string, nextTo: string) {
-    setBomFrom(nextFrom);
-    setBomTo(nextTo);
     setErrorMessage(null);
-    if (!nextFrom || !nextTo) return;
+    if (!nextFrom || !nextTo) {
+      setBomFrom(nextFrom);
+      setBomTo(nextTo);
+      return;
+    }
     if (nextFrom > nextTo) {
       setErrorMessage("Tanggal mulai BOM tidak boleh melebihi tanggal akhir.");
       return;
     }
+    setBomFrom(nextFrom);
+    setBomTo(nextTo);
     try {
       await loadShoppingList(nextFrom, nextTo);
     } catch (err) {
@@ -437,10 +453,7 @@ export function KitchenWorkspace() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-xs font-semibold tracking-wider text-[#C2410C] uppercase">
-            Meja Operasional Dapur
-          </p>
-          <h1 className="font-display mt-1 text-2xl font-bold tracking-tight text-[#0F172A] sm:text-3xl">
+          <h1 className="font-display text-2xl font-bold tracking-tight text-[#0F172A] sm:text-3xl">
             Kontrol Produksi &amp; Daftar Belanja BOM
           </h1>
           <p className="mt-1 text-sm text-[#475569]">

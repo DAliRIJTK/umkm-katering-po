@@ -1,51 +1,62 @@
 import type { OrderStatus, PackageCategory, PaymentMethod } from "./domain/types";
+import { ORDER_STATUS_LABELS } from "./domain/state-machine";
+import { calculateMinDpIdr, formatRupiah } from "./domain/validators";
 
-export const STATUS_META: Record<
+export const formatIdr = formatRupiah;
+export const formatMinDp = calculateMinDpIdr;
+
+const STATUS_STYLE: Record<
   OrderStatus,
-  { label: string; bg: string; fg: string; border: string; desc: string }
+  { bg: string; fg: string; border: string; desc: string }
 > = {
   MENUNGGU_DP: {
-    label: "Menunggu DP",
     bg: "bg-[#FEF3C7]",
     fg: "text-[#B45309]",
     border: "border-[#FDE68A]",
     desc: "Slot terpesan; butuh DP minimal sebelum masuk daftar masak.",
   },
   TERJADWAL: {
-    label: "Terjadwal",
     bg: "bg-[#DBEAFE]",
     fg: "text-[#1D4ED8]",
     border: "border-[#BFDBFE]",
     desc: "DP terpenuhi; otomatis masuk daftar belanja bahan dapur.",
   },
   DIPRODUKSI: {
-    label: "Diproduksi",
     bg: "bg-[#FFEDD5]",
     fg: "text-[#C2410C]",
     border: "border-[#FED7AA]",
     desc: "Pesanan sedang dimasak oleh tim dapur.",
   },
   SIAP_KIRIM: {
-    label: "Siap Kirim",
     bg: "bg-[#CCFBF1]",
     fg: "text-[#0F766E]",
     border: "border-[#99F6E4]",
     desc: "Selesai dikemas; menunggu pelunasan 100% sebelum serah terima.",
   },
   SELESAI_DIKIRIM: {
-    label: "Selesai Dikirim",
     bg: "bg-[#D1FAE5]",
     fg: "text-[#047857]",
     border: "border-[#A7F3D0]",
     desc: "Lunas penuh dan sudah diterima pemesan.",
   },
   DIBATALKAN: {
-    label: "Dibatalkan",
     bg: "bg-[#FEE2E2]",
     fg: "text-[#B91C1C]",
     border: "border-[#FECACA]",
     desc: "Pre-order dibatalkan dan kuota box dikembalikan.",
   },
+};
+
+export const STATUS_META: Record<
+  OrderStatus,
+  { label: string; bg: string; fg: string; border: string; desc: string }
+> = {
+  MENUNGGU_DP: { label: ORDER_STATUS_LABELS.MENUNGGU_DP, ...STATUS_STYLE.MENUNGGU_DP },
+  TERJADWAL: { label: ORDER_STATUS_LABELS.TERJADWAL, ...STATUS_STYLE.TERJADWAL },
+  DIPRODUKSI: { label: ORDER_STATUS_LABELS.DIPRODUKSI, ...STATUS_STYLE.DIPRODUKSI },
+  SIAP_KIRIM: { label: ORDER_STATUS_LABELS.SIAP_KIRIM, ...STATUS_STYLE.SIAP_KIRIM },
+  SELESAI_DIKIRIM: { label: ORDER_STATUS_LABELS.SELESAI_DIKIRIM, ...STATUS_STYLE.SELESAI_DIKIRIM },
+  DIBATALKAN: { label: ORDER_STATUS_LABELS.DIBATALKAN, ...STATUS_STYLE.DIBATALKAN },
 };
 
 export const CATEGORY_LABELS: Record<PackageCategory, string> = {
@@ -59,14 +70,3 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   QRIS: "QRIS",
   TRANSFER: "Transfer Bank",
 };
-
-export function formatIdr(amount: number): string {
-  const rounded = Math.trunc(amount);
-  const abs = Math.abs(rounded).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-  return rounded < 0 ? `-Rp ${abs}` : `Rp ${abs}`;
-}
-
-export function formatMinDp(totalIdr: number, minDpPercent: number): number {
-  if (totalIdr <= 0 || minDpPercent <= 0) return 0;
-  return Math.floor((totalIdr * minDpPercent + 99) / 100);
-}

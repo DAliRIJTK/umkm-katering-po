@@ -2,6 +2,15 @@ import { ConflictError } from "./errors";
 import { calculateMinDpIdr, formatRupiah } from "./validators";
 import type { OrderStatus } from "./types";
 
+export const ALL_ORDER_STATUSES: readonly OrderStatus[] = [
+  "MENUNGGU_DP",
+  "TERJADWAL",
+  "DIPRODUKSI",
+  "SIAP_KIRIM",
+  "SELESAI_DIKIRIM",
+  "DIBATALKAN",
+];
+
 export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   MENUNGGU_DP: "Menunggu DP",
   TERJADWAL: "Terjadwal",

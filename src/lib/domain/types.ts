@@ -90,6 +90,7 @@ export interface PublicOrderTrack {
   institutionName: string;
   deliveryDate: string;
   deliveryTime: string;
+  notes: string;
   status: OrderStatus;
   totalBoxes: number;
   totalIdr: number;

@@ -1,16 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import type {
   CashRecap,
+  CateringOrder,
   IngredientCategory,
   MenuPackage,
   PackageCategory,
   PublicSettings,
 } from "@/lib/domain/types";
 import { CATEGORY_LABELS, formatIdr } from "@/lib/format";
+import { StatusBadge } from "@/components/StatusBadge";
 
 interface IngredientDraft {
+  uid: string;
   ingredientName: string;
   category: IngredientCategory;
   qtyPerBox: string;
@@ -18,8 +22,11 @@ interface IngredientDraft {
   estimatedUnitCostIdr: string;
 }
 
+let ingUidCounter = 1;
 function createEmptyIngredient(): IngredientDraft {
+  ingUidCounter += 1;
   return {
+    uid: `ing-${ingUidCounter}`,
     ingredientName: "",
     category: "BAHAN_BAKU",
     qtyPerBox: "1",
@@ -41,6 +48,7 @@ export function AdminConsole() {
   const [overviewError, setOverviewError] = useState<string | null>(null);
   const [cashRecap, setCashRecap] = useState<CashRecap | null>(null);
   const [packages, setPackages] = useState<MenuPackage[]>([]);
+  const [orders, setOrders] = useState<CateringOrder[]>([]);
 
   // Settings form state
   const [dailyCapacityBoxes, setDailyCapacityBoxes] = useState("200");
@@ -55,13 +63,15 @@ export function AdminConsole() {
     message: string;
   } | null>(null);
 
-  // Package toggle & create state
+  // Package toggle & inline price/minOrder edit
   const [togglingPkgId, setTogglingPkgId] = useState<number | null>(null);
+  const [pkgEdits, setPkgEdits] = useState<Record<number, { priceIdr: string; minOrderQty: string }>>({});
   const [packageListFeedback, setPackageListFeedback] = useState<{
     type: "success" | "error";
     message: string;
   } | null>(null);
 
+  // Create new package state
   const [pkgCode, setPkgCode] = useState("");
   const [pkgName, setPkgName] = useState("");
   const [pkgCategory, setPkgCategory] = useState<PackageCategory>("NASI_KOTAK");
@@ -69,9 +79,7 @@ export function AdminConsole() {
   const [pkgUnitLabel, setPkgUnitLabel] = useState("box");
   const [pkgPriceIdr, setPkgPriceIdr] = useState("");
   const [pkgMinOrderQty, setPkgMinOrderQty] = useState("15");
-  const [ingredients, setIngredients] = useState<IngredientDraft[]>([
-    createEmptyIngredient(),
-  ]);
+  const [ingredients, setIngredients] = useState<IngredientDraft[]>([createEmptyIngredient()]);
   const [creatingPkg, setCreatingPkg] = useState(false);
   const [createPkgFeedback, setCreatePkgFeedback] = useState<{
     type: "success" | "error";
@@ -84,6 +92,14 @@ export function AdminConsole() {
     setBusinessName(settings.businessName);
     setWhatsappNumber(settings.whatsappNumber);
     setAddressArea(settings.addressArea);
+  }, []);
+
+  const syncPackageEdits = useCallback((list: MenuPackage[]) => {
+    const next: Record<number, { priceIdr: string; minOrderQty: string }> = {};
+    for (const p of list) {
+      next[p.id] = { priceIdr: String(p.priceIdr), minOrderQty: String(p.minOrderQty) };
+    }
+    setPkgEdits(next);
   }, []);
 
   const loadOverview = useCallback(async () => {
@@ -102,13 +118,16 @@ export function AdminConsole() {
       }
       applySettingsToForm(data.settings as PublicSettings);
       setCashRecap(data.cashRecap as CashRecap);
-      setPackages((data.packages ?? []) as MenuPackage[]);
+      const pkgs = (data.packages ?? []) as MenuPackage[];
+      setPackages(pkgs);
+      syncPackageEdits(pkgs);
+      setOrders((data.orders ?? []) as CateringOrder[]);
     } catch {
       setOverviewError("Gagal menghubungi server untuk memuat data Admin.");
     } finally {
       setLoadingOverview(false);
     }
-  }, [applySettingsToForm]);
+  }, [applySettingsToForm, syncPackageEdits]);
 
   useEffect(() => {
     let active = true;
@@ -137,6 +156,11 @@ export function AdminConsole() {
       active = false;
     };
   }, [loadOverview]);
+
+  const unpaidOrders = useMemo(
+    () => orders.filter((o) => o.status !== "DIBATALKAN" && o.remainingIdr > 0),
+    [orders]
+  );
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -171,6 +195,7 @@ export function AdminConsole() {
       setAuthenticated(false);
       setCashRecap(null);
       setPackages([]);
+      setOrders([]);
       setLogoutLoading(false);
     }
   }
@@ -229,14 +254,18 @@ export function AdminConsole() {
     }
   }
 
-  async function handleTogglePackage(pkg: MenuPackage) {
+  async function handlePatchPackage(
+    pkg: MenuPackage,
+    patch: { isActive?: boolean; priceIdr?: number; minOrderQty?: number },
+    successText: string
+  ) {
     setTogglingPkgId(pkg.id);
     setPackageListFeedback(null);
     try {
       const res = await fetch(`/api/admin/packages/${pkg.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isActive: !pkg.isActive }),
+        body: JSON.stringify(patch),
       });
       const data = await res.json();
       if (res.status === 401) {
@@ -247,34 +276,33 @@ export function AdminConsole() {
       if (!res.ok) {
         setPackageListFeedback({
           type: "error",
-          message: data.error || "Gagal mengubah status paket.",
+          message: data.error || "Gagal memperbarui paket.",
         });
         return;
       }
       const updated = data.package as MenuPackage;
-      setPackages((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
-      setPackageListFeedback({
-        type: "success",
-        message: `Paket ${updated.name} kini berstatus ${updated.isActive ? "Aktif" : "Nonaktif"}.`,
+      setPackages((prev) => {
+        const nextList = prev.map((item) => (item.id === updated.id ? updated : item));
+        syncPackageEdits(nextList);
+        return nextList;
       });
+      setPackageListFeedback({ type: "success", message: successText });
     } catch {
       setPackageListFeedback({
         type: "error",
-        message: "Gagal menghubungi server saat mengubah status paket.",
+        message: "Gagal menghubungi server saat memperbarui paket.",
       });
     } finally {
       setTogglingPkgId(null);
     }
   }
 
-  function updateIngredientRow(index: number, patch: Partial<IngredientDraft>) {
-    setIngredients((prev) =>
-      prev.map((row, idx) => (idx === index ? { ...row, ...patch } : row))
-    );
+  function updateIngredientRow(uid: string, patch: Partial<IngredientDraft>) {
+    setIngredients((prev) => prev.map((row) => (row.uid === uid ? { ...row, ...patch } : row)));
   }
 
-  function removeIngredientRow(index: number) {
-    setIngredients((prev) => (prev.length <= 1 ? prev : prev.filter((_, idx) => idx !== index)));
+  function removeIngredientRow(uid: string) {
+    setIngredients((prev) => (prev.length <= 1 ? prev : prev.filter((row) => row.uid !== uid)));
   }
 
   async function handleCreatePackage(e: React.FormEvent) {
@@ -320,7 +348,11 @@ export function AdminConsole() {
       }
 
       const created = data.package as MenuPackage;
-      setPackages((prev) => [...prev, created]);
+      setPackages((prev) => {
+        const nextList = [...prev, created];
+        syncPackageEdits(nextList);
+        return nextList;
+      });
       setPkgCode("");
       setPkgName("");
       setPkgCategory("NASI_KOTAK");
@@ -355,14 +387,12 @@ export function AdminConsole() {
     return (
       <div className="mx-auto max-w-md">
         <div className="rounded-2xl border border-[#CBD5E1] bg-white p-6 sm:p-8">
-          <p className="text-xs font-bold tracking-wider text-[#C2410C] uppercase">
-            Area Terproteksi
-          </p>
-          <h1 className="font-display mt-1 text-2xl font-bold text-[#0F172A]">
+          <h1 className="font-display text-2xl font-bold text-[#0F172A]">
             Masuk Konsol Admin
           </h1>
           <p className="mt-2 text-sm text-[#475569]">
-            Masukkan PIN Admin untuk mengelola rekap kas, kapasitas harian dapur, persentase DP, serta katalog paket dan BOM.
+            Masukkan PIN Admin untuk mengelola rekap kas, piutang event, kapasitas harian dapur,
+            persentase DP, serta katalog paket dan BOM.
           </p>
           <p className="mt-2 rounded-xl border border-slate-200 bg-[#F8FAFC] px-3.5 py-2.5 text-xs text-[#475569]">
             PIN demo lokal default adalah{" "}
@@ -415,14 +445,11 @@ export function AdminConsole() {
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-bold tracking-wider text-[#C2410C] uppercase">
-            Kontrol Pemilik &amp; Pengaturan Dapur
-          </p>
-          <h1 className="font-display mt-1 text-2xl font-bold text-[#0F172A] sm:text-3xl">
+          <h1 className="font-display text-2xl font-bold text-[#0F172A] sm:text-3xl">
             Konsol Admin DapurRantang
           </h1>
           <p className="mt-1 text-sm text-[#475569]">
-            Pantau arus kas, piutang aktif, kuota kapasitas harian, dan resep BOM tiap paket menu.
+            Pantau arus kas, daftar piutang aktif, kuota kapasitas harian, dan resep BOM tiap paket menu.
           </p>
         </div>
 
@@ -455,11 +482,11 @@ export function AdminConsole() {
         </div>
       )}
 
-      {/* 1. Rekap Kas & Piutang */}
-      <section aria-labelledby="heading-cash-recap" className="space-y-3">
+      {/* 1. Rekap Kas & Daftar Piutang */}
+      <section aria-labelledby="heading-cash-recap" className="space-y-4">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 id="heading-cash-recap" className="text-lg font-bold text-[#0F172A]">
-            Rekap Kas &amp; Piutang
+            Rekap Kas &amp; Piutang Event
           </h2>
           {cashRecap && (
             <p className="font-data text-xs font-medium text-[#475569]">
@@ -499,6 +526,65 @@ export function AdminConsole() {
               {cashRecap ? formatIdr(cashRecap.totalReceivableIdr) : "-"}
             </p>
           </div>
+        </div>
+
+        <div className="overflow-hidden rounded-2xl border border-[#CBD5E1] bg-white">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-3.5">
+            <h3 className="text-sm font-bold text-[#0F172A]">
+              Daftar Piutang PO Belum Lunas ({unpaidOrders.length})
+            </h3>
+            <Link
+              href="/kasir"
+              className="inline-flex min-h-[44px] items-center rounded-lg px-3 text-xs font-semibold text-[#2563EB] hover:bg-blue-50"
+            >
+              Catat Pelunasan di Meja Kasir &rarr;
+            </Link>
+          </div>
+          {unpaidOrders.length === 0 ? (
+            <p className="px-5 py-4 text-sm text-[#475569]">
+              Seluruh PO aktif sudah lunas.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-left text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-[#F8FAFC] text-xs font-bold text-[#475569] uppercase">
+                    <th className="px-4 py-3">Kode PO</th>
+                    <th className="px-4 py-3">Pemesan</th>
+                    <th className="px-4 py-3">Kirim</th>
+                    <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3 text-right">Terbayar</th>
+                    <th className="px-4 py-3 text-right">Sisa Piutang</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {unpaidOrders.map((ord) => (
+                    <tr key={ord.id} className="hover:bg-slate-50">
+                      <td className="font-data px-4 py-3 font-bold text-[#0F172A]">
+                        {ord.orderCode}
+                      </td>
+                      <td className="px-4 py-3 text-[#0F172A]">
+                        {ord.customerName}
+                        {ord.institutionName ? ` · ${ord.institutionName}` : ""}
+                      </td>
+                      <td className="font-data px-4 py-3 text-xs text-[#475569]">
+                        {ord.deliveryDate} {ord.deliveryTime}
+                      </td>
+                      <td className="px-4 py-3">
+                        <StatusBadge status={ord.status} />
+                      </td>
+                      <td className="font-data px-4 py-3 text-right text-[#047857]">
+                        {formatIdr(ord.paidIdr)}
+                      </td>
+                      <td className="font-data px-4 py-3 text-right font-bold text-[#C2410C]">
+                        {formatIdr(ord.remainingIdr)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </section>
 
@@ -640,7 +726,7 @@ export function AdminConsole() {
             Katalog Paket &amp; BOM
           </h2>
           <p className="mt-1 text-sm text-[#475569]">
-            Aktifkan atau nonaktifkan paket pada katalog publik, serta periksa komposisi bahan (BOM) per box.
+            Sesuaikan harga, minimal order, atau status aktif paket serta periksa komposisi bahan (BOM).
           </p>
 
           {packageListFeedback && (
@@ -656,87 +742,128 @@ export function AdminConsole() {
             </div>
           )}
 
-          <div className="mt-4 space-y-4">
-            {packages.map((pkg) => (
-              <article
-                key={pkg.id}
-                className="rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] p-4"
-              >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-data rounded-md bg-white px-2 py-0.5 text-xs font-bold text-[#0F172A] ring-1 ring-[#CBD5E1]">
-                        {pkg.code}
-                      </span>
-                      <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-semibold text-[#0F172A]">
-                        {CATEGORY_LABELS[pkg.category]}
-                      </span>
-                      <span
-                        className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${
+          <div className="mt-4 divide-y divide-slate-200">
+            {packages.map((pkg) => {
+              const edit = pkgEdits[pkg.id] ?? {
+                priceIdr: String(pkg.priceIdr),
+                minOrderQty: String(pkg.minOrderQty),
+              };
+              return (
+                <article key={pkg.id} className="py-5 first:pt-2 last:pb-0">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div className="min-w-[240px] flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-data rounded-md bg-[#F8FAFC] px-2 py-0.5 text-xs font-bold text-[#0F172A] ring-1 ring-[#CBD5E1]">
+                          {pkg.code}
+                        </span>
+                        <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-[#0F172A]">
+                          {CATEGORY_LABELS[pkg.category]}
+                        </span>
+                        <span
+                          className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${
+                            pkg.isActive
+                              ? "border-[#A7F3D0] bg-[#D1FAE5] text-[#047857]"
+                              : "border-slate-300 bg-slate-200 text-[#475569]"
+                          }`}
+                        >
+                          {pkg.isActive ? "Aktif" : "Nonaktif"}
+                        </span>
+                      </div>
+                      <h3 className="mt-2 text-base font-bold text-[#0F172A]">{pkg.name}</h3>
+                      <p className="mt-1 text-xs text-[#475569]">{pkg.description}</p>
+                    </div>
+
+                    <div className="flex flex-wrap items-end gap-2">
+                      <div>
+                        <label
+                          htmlFor={`edit-price-${pkg.id}`}
+                          className="block text-xs font-semibold text-[#475569]"
+                        >
+                          Harga (Rp)
+                        </label>
+                        <input
+                          id={`edit-price-${pkg.id}`}
+                          type="number"
+                          min={1000}
+                          value={edit.priceIdr}
+                          onChange={(e) =>
+                            setPkgEdits((prev) => ({
+                              ...prev,
+                              [pkg.id]: { ...edit, priceIdr: e.target.value },
+                            }))
+                          }
+                          className="font-data mt-1 min-h-[44px] w-28 rounded-xl border border-[#CBD5E1] px-2.5 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label
+                          htmlFor={`edit-min-${pkg.id}`}
+                          className="block text-xs font-semibold text-[#475569]"
+                        >
+                          Min. Order
+                        </label>
+                        <input
+                          id={`edit-min-${pkg.id}`}
+                          type="number"
+                          min={1}
+                          max={1000}
+                          value={edit.minOrderQty}
+                          onChange={(e) =>
+                            setPkgEdits((prev) => ({
+                              ...prev,
+                              [pkg.id]: { ...edit, minOrderQty: e.target.value },
+                            }))
+                          }
+                          className="font-data mt-1 min-h-[44px] w-20 rounded-xl border border-[#CBD5E1] px-2.5 text-sm"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void handlePatchPackage(
+                            pkg,
+                            {
+                              priceIdr: Number(edit.priceIdr),
+                              minOrderQty: Number(edit.minOrderQty),
+                            },
+                            `Harga & minimal order ${pkg.code} diperbarui.`
+                          )
+                        }
+                        disabled={togglingPkgId === pkg.id}
+                        className="min-h-[44px] cursor-pointer rounded-xl bg-[#2563EB] px-4 text-xs font-bold text-white hover:bg-[#1D4ED8] disabled:bg-slate-400"
+                      >
+                        Simpan Harga
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void handlePatchPackage(
+                            pkg,
+                            { isActive: !pkg.isActive },
+                            `Paket ${pkg.name} kini berstatus ${!pkg.isActive ? "Aktif" : "Nonaktif"}.`
+                          )
+                        }
+                        disabled={togglingPkgId === pkg.id}
+                        className={`min-h-[44px] cursor-pointer rounded-xl px-4 text-xs font-semibold transition-colors disabled:opacity-60 ${
                           pkg.isActive
-                            ? "border-[#A7F3D0] bg-[#D1FAE5] text-[#047857]"
-                            : "border-slate-300 bg-slate-200 text-[#475569]"
+                            ? "border border-[#CBD5E1] bg-white text-[#0F172A] hover:bg-slate-100"
+                            : "bg-[#047857] text-white hover:bg-[#065F46]"
                         }`}
                       >
-                        {pkg.isActive ? "Aktif" : "Nonaktif"}
-                      </span>
+                        {pkg.isActive ? "Nonaktifkan" : "Aktifkan"}
+                      </button>
                     </div>
-                    <h3 className="mt-2 text-base font-bold text-[#0F172A]">{pkg.name}</h3>
-                    <p className="mt-1 text-xs text-[#475569]">{pkg.description}</p>
-                    <p className="font-data mt-2 text-sm font-bold text-[#C2410C]">
-                      {formatIdr(pkg.priceIdr)} / {pkg.unitLabel} · Min. {pkg.minOrderQty}{" "}
-                      {pkg.unitLabel}
-                    </p>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => void handleTogglePackage(pkg)}
-                    disabled={togglingPkgId === pkg.id}
-                    className={`min-h-[44px] cursor-pointer rounded-xl px-4 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                      pkg.isActive
-                        ? "border border-[#CBD5E1] bg-white text-[#0F172A] hover:bg-slate-100"
-                        : "bg-[#047857] text-white hover:bg-[#065F46]"
-                    }`}
-                  >
-                    {togglingPkgId === pkg.id
-                      ? "Memproses..."
-                      : pkg.isActive
-                        ? "Nonaktifkan Paket"
-                        : "Aktifkan Paket"}
-                  </button>
-                </div>
-
-                <div className="mt-3 border-t border-slate-200 pt-3">
-                  <p className="text-xs font-bold tracking-wider text-[#475569] uppercase">
-                    Komposisi BOM ({pkg.ingredients.length} bahan)
+                  <p className="font-data mt-2 text-xs text-[#475569]">
+                    BOM ({pkg.ingredients.length} komponen):{" "}
+                    {pkg.ingredients
+                      .map((ing) => `${ing.ingredientName} ${ing.qtyPerBox} ${ing.unit}`)
+                      .join(" · ")}
                   </p>
-                  <ul className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                    {pkg.ingredients.map((ing) => (
-                      <li
-                        key={ing.id}
-                        className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"
-                      >
-                        <div>
-                          <p className="font-semibold text-[#0F172A]">{ing.ingredientName}</p>
-                          <p className="text-[#475569]">
-                            {ing.category === "BAHAN_BAKU" ? "Bahan Baku" : "Kemasan"}
-                          </p>
-                        </div>
-                        <div className="text-right">
-                          <p className="font-data font-bold text-[#0F172A]">
-                            {ing.qtyPerBox} {ing.unit}
-                          </p>
-                          <p className="font-data text-[#475569]">
-                            {formatIdr(ing.estimatedUnitCostIdr)}/{ing.unit}
-                          </p>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </article>
-            ))}
+                </article>
+              );
+            })}
           </div>
         </div>
 
@@ -873,54 +1000,52 @@ export function AdminConsole() {
                 </div>
                 <button
                   type="button"
-                  onClick={() =>
-                    setIngredients((prev) => [...prev, createEmptyIngredient()])
-                  }
+                  onClick={() => setIngredients((prev) => [...prev, createEmptyIngredient()])}
                   className="min-h-[44px] cursor-pointer rounded-xl border border-[#CBD5E1] bg-white px-4 text-xs font-bold text-[#0F172A] transition-colors hover:bg-slate-100"
                 >
                   + Tambah Komponen Bahan
                 </button>
               </div>
 
-              <div className="space-y-3">
+              <div className="divide-y divide-slate-200">
                 {ingredients.map((row, index) => (
                   <div
-                    key={index}
-                    className="grid gap-3 rounded-xl border border-slate-200 bg-white p-3 sm:grid-cols-12 sm:items-end"
+                    key={row.uid}
+                    className="grid gap-3 py-3 first:pt-1 last:pb-0 sm:grid-cols-12 sm:items-end"
                   >
                     <div className="sm:col-span-3">
                       <label
-                        htmlFor={`ing-name-${index}`}
+                        htmlFor={`ing-name-${row.uid}`}
                         className="block text-xs font-semibold text-[#0F172A]"
                       >
                         Nama Bahan
                       </label>
                       <input
-                        id={`ing-name-${index}`}
+                        id={`ing-name-${row.uid}`}
                         type="text"
                         maxLength={120}
                         required
                         value={row.ingredientName}
                         onChange={(e) =>
-                          updateIngredientRow(index, { ingredientName: e.target.value })
+                          updateIngredientRow(row.uid, { ingredientName: e.target.value })
                         }
                         placeholder="Beras Pulen"
-                        className="mt-1 min-h-[44px] w-full rounded-lg border border-[#CBD5E1] px-3 text-sm"
+                        className="mt-1 min-h-[44px] w-full rounded-lg border border-[#CBD5E1] bg-white px-3 text-sm"
                       />
                     </div>
 
                     <div className="sm:col-span-2">
                       <label
-                        htmlFor={`ing-cat-${index}`}
+                        htmlFor={`ing-cat-${row.uid}`}
                         className="block text-xs font-semibold text-[#0F172A]"
                       >
                         Kategori
                       </label>
                       <select
-                        id={`ing-cat-${index}`}
+                        id={`ing-cat-${row.uid}`}
                         value={row.category}
                         onChange={(e) =>
-                          updateIngredientRow(index, {
+                          updateIngredientRow(row.uid, {
                             category: e.target.value as IngredientCategory,
                           })
                         }
@@ -933,71 +1058,69 @@ export function AdminConsole() {
 
                     <div className="sm:col-span-2">
                       <label
-                        htmlFor={`ing-qty-${index}`}
+                        htmlFor={`ing-qty-${row.uid}`}
                         className="block text-xs font-semibold text-[#0F172A]"
                       >
                         Takaran / Box
                       </label>
                       <input
-                        id={`ing-qty-${index}`}
+                        id={`ing-qty-${row.uid}`}
                         type="number"
                         min={1}
                         required
                         value={row.qtyPerBox}
                         onChange={(e) =>
-                          updateIngredientRow(index, { qtyPerBox: e.target.value })
+                          updateIngredientRow(row.uid, { qtyPerBox: e.target.value })
                         }
-                        className="font-data mt-1 min-h-[44px] w-full rounded-lg border border-[#CBD5E1] px-3 text-sm"
+                        className="font-data mt-1 min-h-[44px] w-full rounded-lg border border-[#CBD5E1] bg-white px-3 text-sm"
                       />
                     </div>
 
                     <div className="sm:col-span-2">
                       <label
-                        htmlFor={`ing-unit-${index}`}
+                        htmlFor={`ing-unit-${row.uid}`}
                         className="block text-xs font-semibold text-[#0F172A]"
                       >
                         Satuan
                       </label>
                       <input
-                        id={`ing-unit-${index}`}
+                        id={`ing-unit-${row.uid}`}
                         type="text"
                         maxLength={24}
                         required
                         value={row.unit}
-                        onChange={(e) =>
-                          updateIngredientRow(index, { unit: e.target.value })
-                        }
+                        onChange={(e) => updateIngredientRow(row.uid, { unit: e.target.value })}
                         placeholder="gram / pcs"
-                        className="mt-1 min-h-[44px] w-full rounded-lg border border-[#CBD5E1] px-3 text-sm"
+                        className="mt-1 min-h-[44px] w-full rounded-lg border border-[#CBD5E1] bg-white px-3 text-sm"
                       />
                     </div>
 
                     <div className="sm:col-span-2">
                       <label
-                        htmlFor={`ing-cost-${index}`}
+                        htmlFor={`ing-cost-${row.uid}`}
                         className="block text-xs font-semibold text-[#0F172A]"
                       >
                         Estimasi Harga (IDR)
                       </label>
                       <input
-                        id={`ing-cost-${index}`}
+                        id={`ing-cost-${row.uid}`}
                         type="number"
                         min={0}
                         required
                         value={row.estimatedUnitCostIdr}
                         onChange={(e) =>
-                          updateIngredientRow(index, {
+                          updateIngredientRow(row.uid, {
                             estimatedUnitCostIdr: e.target.value,
                           })
                         }
-                        className="font-data mt-1 min-h-[44px] w-full rounded-lg border border-[#CBD5E1] px-3 text-sm"
+                        className="font-data mt-1 min-h-[44px] w-full rounded-lg border border-[#CBD5E1] bg-white px-3 text-sm"
                       />
                     </div>
 
                     <div className="sm:col-span-1">
                       <button
                         type="button"
-                        onClick={() => removeIngredientRow(index)}
+                        onClick={() => removeIngredientRow(row.uid)}
                         disabled={ingredients.length <= 1}
                         aria-label={`Hapus bahan baris ${index + 1}`}
                         className="min-h-[44px] w-full cursor-pointer rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] px-2 text-xs font-semibold text-[#B91C1C] transition-colors hover:bg-[#FEE2E2] disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"

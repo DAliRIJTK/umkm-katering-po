@@ -72,11 +72,15 @@ export function CashierDesk() {
       const fetched = (data.orders ?? []) as CateringOrder[];
       setOrders(fetched);
       setDrafts((prev) => {
-        const next: Record<number, PaymentFormDraft> = { ...prev };
+        const next: Record<number, PaymentFormDraft> = {};
         for (const ord of fetched) {
-          if (!next[ord.id]) {
-            next[ord.id] = getDefaultDraft(ord);
-          }
+          const prevOrder = orders.find((o) => o.id === ord.id);
+          const changed =
+            !prevOrder ||
+            prevOrder.remainingIdr !== ord.remainingIdr ||
+            prevOrder.paidIdr !== ord.paidIdr ||
+            prevOrder.status !== ord.status;
+          next[ord.id] = prev[ord.id] && !changed ? prev[ord.id] : getDefaultDraft(ord);
         }
         return next;
       });
@@ -280,10 +284,7 @@ export function CashierDesk() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-bold tracking-wider text-[#C2410C] uppercase">
-            Operasional Kasir &amp; Pelunasan
-          </p>
-          <h1 className="font-display mt-1 text-2xl font-bold text-[#0F172A] sm:text-3xl">
+          <h1 className="font-display text-2xl font-bold text-[#0F172A] sm:text-3xl">
             Meja Kasir Pre-Order
           </h1>
           <p className="mt-1 text-sm text-[#475569]">
@@ -438,21 +439,6 @@ export function CashierDesk() {
                       {order.totalBoxes} box
                     </p>
                     <p className="mt-1 text-xs text-[#475569]">{order.deliveryAddress}</p>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    {canFinishDelivery && (
-                      <button
-                        type="button"
-                        onClick={() => void handleCompleteDelivery(order)}
-                        disabled={deliveringId === order.id}
-                        className="min-h-[44px] cursor-pointer rounded-xl bg-[#047857] px-4 text-sm font-bold text-white transition-colors hover:bg-[#065F46] disabled:cursor-not-allowed disabled:bg-slate-400"
-                      >
-                        {deliveringId === order.id
-                          ? "Memproses..."
-                          : "Selesaikan Pengiriman"}
-                      </button>
-                    )}
                   </div>
                 </div>
 
