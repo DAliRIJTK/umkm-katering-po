@@ -796,7 +796,7 @@ export async function createOrder(db: PGlite, input: CreateOrderInput): Promise<
 
     let initialPaymentAmount = 0;
     let initialPaymentMethod: PaymentMethod = "TRANSFER";
-    if (input.initialPayment && input.initialPayment.amountIdr > 0) {
+    if (input.initialPayment !== undefined) {
       initialPaymentAmount = validatePositiveInt(
         input.initialPayment.amountIdr,
         "Nominal DP awal",

@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
     const db = await getDb();
     await ensureInitialized(db);
     const body = await parseJsonBody<CreateOrderInput>(req);
-    if (body.initialPayment && body.initialPayment.amountIdr > 0 && !isAdminAuthenticated(req)) {
+    if (body.initialPayment !== undefined && !isAdminAuthenticated(req)) {
       throw new UnauthorizedError("Pembayaran awal saat membuat PO hanya dapat dicatat oleh Admin.");
     }
     const order = await createOrder(db, body);
