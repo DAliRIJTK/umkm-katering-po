@@ -690,7 +690,7 @@ export function KitchenWorkspace() {
                   <path d="M12 5v14M5 12h14" />
                 )}
               </svg>
-              <span>{isCreateOpen ? "Tutup Form PO" : "+ Catat PO Baru"}</span>
+              <span>{isCreateOpen ? "Tutup Form PO" : "Catat PO Baru"}</span>
             </button>
           </div>
 
